@@ -81,6 +81,6 @@ const orderSchema = new mongoose.Schema({
 orderSchema.index({ counterName: 'text', bit: 'text' });
 orderSchema.index({ status: 1 });
 orderSchema.index({ date: 1 });
-orderSchema.index({ orderNumber: 1 });
+// Note: orderNumber index is automatically created by unique: true constraint
 
 module.exports = mongoose.model('Order', orderSchema);
