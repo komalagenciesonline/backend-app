@@ -171,9 +171,20 @@ router.get('/stats/dashboard', async (req, res) => {
     const totalOrders = await Order.countDocuments();
     const pendingOrders = await Order.countDocuments({ status: 'Pending' });
     
-    // Calculate total items across all orders
-    const orders = await Order.find({}, 'totalItems');
-    const totalItems = orders.reduce((sum, order) => sum + order.totalItems, 0);
+    // Calculate unique items across all orders
+    const orders = await Order.find({}, 'items');
+    const uniqueProducts = new Set();
+    orders.forEach(order => {
+      if (order.items) {
+        order.items.forEach(item => {
+          // Create a unique key using productName + brandName
+          // since some items have null productId
+          const uniqueKey = `${item.productName}-${item.brandName}`;
+          uniqueProducts.add(uniqueKey);
+        });
+      }
+    });
+    const totalItems = uniqueProducts.size;
 
     // Hardcoded bits count (same as frontend)
     const totalBits = 8;
