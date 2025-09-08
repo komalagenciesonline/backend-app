@@ -25,6 +25,12 @@ const orderItemSchema = new mongoose.Schema({
     type: Number,
     required: true,
     min: 1
+  },
+  productNotes: {
+    type: String,
+    default: '',
+    trim: true,
+    maxlength: 500
   }
 });
 

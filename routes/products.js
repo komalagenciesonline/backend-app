@@ -114,7 +114,18 @@ router.put('/:id', async (req, res) => {
 
     // Update brand product counts if brand changed
     if (product.brandId.toString() !== brandId) {
-      await Brand.findByIdAndUpdate(product.brandId, { $inc: { productCount: -1 } });
+      const oldBrand = await Brand.findByIdAndUpdate(
+        product.brandId, 
+        { $inc: { productCount: -1 } },
+        { new: true }
+      );
+      
+      // Automatically delete old brand if it has no products left
+      if (oldBrand && oldBrand.productCount <= 0) {
+        await Brand.findByIdAndDelete(product.brandId);
+        console.log(`Brand "${oldBrand.name}" automatically deleted as it has no products`);
+      }
+      
       await Brand.findByIdAndUpdate(brandId, { $inc: { productCount: 1 } });
     }
 
@@ -137,7 +148,17 @@ router.delete('/:id', async (req, res) => {
     await Product.findByIdAndDelete(req.params.id);
     
     // Update brand's product count
-    await Brand.findByIdAndUpdate(product.brandId, { $inc: { productCount: -1 } });
+    const updatedBrand = await Brand.findByIdAndUpdate(
+      product.brandId, 
+      { $inc: { productCount: -1 } },
+      { new: true }
+    );
+    
+    // Automatically delete brand if it has no products left
+    if (updatedBrand && updatedBrand.productCount <= 0) {
+      await Brand.findByIdAndDelete(product.brandId);
+      console.log(`Brand "${updatedBrand.name}" automatically deleted as it has no products`);
+    }
     
     res.json({ message: 'Product deleted successfully' });
   } catch (error) {

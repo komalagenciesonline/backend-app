@@ -1,6 +1,30 @@
 const express = require('express');
 const router = express.Router();
 const Brand = require('../models/Brand');
+const Product = require('../models/Product');
+
+// Helper function to automatically delete brands with no products
+const cleanupEmptyBrands = async () => {
+  try {
+    const emptyBrands = await Brand.find({ productCount: { $lte: 0 } });
+    
+    for (const brand of emptyBrands) {
+      // Double-check by counting actual products
+      const actualProductCount = await Product.countDocuments({ brandId: brand._id });
+      
+      if (actualProductCount === 0) {
+        await Brand.findByIdAndDelete(brand._id);
+        console.log(`Brand "${brand.name}" automatically deleted as it has no products`);
+      } else {
+        // Sync the productCount if it's incorrect
+        await Brand.findByIdAndUpdate(brand._id, { productCount: actualProductCount });
+        console.log(`Synced productCount for brand "${brand.name}" to ${actualProductCount}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error during brand cleanup:', error);
+  }
+};
 
 // GET /api/brands - Get all brands
 router.get('/', async (req, res) => {
@@ -108,8 +132,10 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Brand not found' });
     }
 
-    // Check if brand has products
-    if (brand.productCount > 0) {
+    // Double-check by counting actual products
+    const actualProductCount = await Product.countDocuments({ brandId: req.params.id });
+    
+    if (actualProductCount > 0) {
       return res.status(400).json({ 
         error: 'Cannot delete brand with existing products. Please delete all products first.' 
       });
@@ -120,6 +146,17 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting brand:', error);
     res.status(500).json({ error: 'Failed to delete brand' });
+  }
+});
+
+// POST /api/brands/cleanup - Manually trigger cleanup of empty brands
+router.post('/cleanup', async (req, res) => {
+  try {
+    await cleanupEmptyBrands();
+    res.json({ message: 'Brand cleanup completed successfully' });
+  } catch (error) {
+    console.error('Error during brand cleanup:', error);
+    res.status(500).json({ error: 'Failed to cleanup brands' });
   }
 });
 
