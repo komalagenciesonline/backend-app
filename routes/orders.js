@@ -67,10 +67,6 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Generate order number
-    const orderCount = await Order.countDocuments();
-    const orderNumber = `ORD-${String(orderCount + 1).padStart(3, '0')}`;
-
     // Get current date
     const now = new Date();
     const date = now.toLocaleDateString('en-GB'); // DD/MM/YYYY format
@@ -79,20 +75,56 @@ router.post('/', async (req, res) => {
       minute: '2-digit' 
     });
 
-    const order = new Order({
-      counterName: counterName.trim(),
-      bit: bit.trim(),
-      totalItems,
-      totalAmount,
-      date,
-      time,
-      status: 'Pending',
-      orderNumber,
-      items: items || []
-    });
+    // Generate order number using atomic operation
+    let orderNumber;
+    let attempts = 0;
+    const maxAttempts = 10;
+    
+    while (attempts < maxAttempts) {
+      try {
+        // Get the highest existing order number
+        const lastOrder = await Order.findOne({}, {}, { sort: { orderNumber: -1 } });
+        let nextNumber = 1;
+        
+        if (lastOrder && lastOrder.orderNumber) {
+          // Extract number from last order (e.g., "ORD-004" -> 4)
+          const lastNumber = parseInt(lastOrder.orderNumber.split('-')[1]);
+          nextNumber = lastNumber + 1;
+        }
+        
+        orderNumber = `ORD-${String(nextNumber).padStart(3, '0')}`;
+        
+        // Try to create the order with this number
+        const order = new Order({
+          counterName: counterName.trim(),
+          bit: bit.trim(),
+          totalItems,
+          totalAmount,
+          date,
+          time,
+          status: 'Pending',
+          orderNumber,
+          items: items || []
+        });
 
-    const savedOrder = await order.save();
-    res.status(201).json(savedOrder);
+        const savedOrder = await order.save();
+        res.status(201).json(savedOrder);
+        return; // Success, exit the function
+        
+      } catch (error) {
+        if (error.code === 11000 && error.keyPattern && error.keyPattern.orderNumber) {
+          // Duplicate key error, try again with next number
+          attempts++;
+          continue;
+        } else {
+          // Other error, throw it
+          throw error;
+        }
+      }
+    }
+    
+    // If we get here, we've exceeded max attempts
+    throw new Error('Unable to generate unique order number after multiple attempts');
   } catch (error) {
     console.error('Error creating order:', error);
     res.status(500).json({ error: 'Failed to create order' });
