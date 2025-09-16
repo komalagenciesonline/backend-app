@@ -14,6 +14,10 @@ const brandSchema = new mongoose.Schema({
   image: {
     type: String,
     default: ''
+  },
+  order: {
+    type: Number,
+    default: 0
   }
 }, {
   timestamps: true

@@ -29,7 +29,7 @@ const cleanupEmptyBrands = async () => {
 // GET /api/brands - Get all brands
 router.get('/', async (req, res) => {
   try {
-    const brands = await Brand.find().sort({ name: 1 });
+    const brands = await Brand.find().sort({ order: 1, name: 1 });
     res.json(brands);
   } catch (error) {
     console.error('Error fetching brands:', error);
@@ -80,6 +80,34 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('Error creating brand:', error);
     res.status(500).json({ error: 'Failed to create brand' });
+  }
+});
+
+// PUT /api/brands/order - Update brand order
+router.put('/order', async (req, res) => {
+  try {
+    const { brandOrders } = req.body;
+
+    // Validation
+    if (!brandOrders || !Array.isArray(brandOrders)) {
+      return res.status(400).json({ error: 'brandOrders array is required' });
+    }
+
+    // Update each brand's order
+    const updatePromises = brandOrders.map(({ brandId, order }) => {
+      return Brand.findByIdAndUpdate(
+        brandId,
+        { order },
+        { new: true }
+      );
+    });
+
+    await Promise.all(updatePromises);
+    
+    res.json({ message: 'Brand order updated successfully' });
+  } catch (error) {
+    console.error('Error updating brand order:', error);
+    res.status(500).json({ error: 'Failed to update brand order' });
   }
 });
 
