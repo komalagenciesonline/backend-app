@@ -58,7 +58,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/orders - Create new order
 router.post('/', async (req, res) => {
   try {
-    const { counterName, bit, totalItems, totalAmount, items } = req.body;
+    const { counterName, bit, totalItems, totalAmount, items, orderDate } = req.body;
 
     // Validation
     if (!counterName || !bit || totalItems === undefined || totalAmount === undefined) {
@@ -67,13 +67,23 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Get current date
-    const now = new Date();
-    const date = now.toLocaleDateString('en-GB'); // DD/MM/YYYY format
-    const time = now.toLocaleTimeString('en-GB', { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
+    // Use provided orderDate or current date
+    let date, time;
+    if (orderDate) {
+      const selectedDate = new Date(orderDate);
+      date = selectedDate.toLocaleDateString('en-GB'); // DD/MM/YYYY format
+      time = selectedDate.toLocaleTimeString('en-GB', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+    } else {
+      const now = new Date();
+      date = now.toLocaleDateString('en-GB'); // DD/MM/YYYY format
+      time = now.toLocaleTimeString('en-GB', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+    }
 
     // Generate order number using atomic operation
     let orderNumber;
