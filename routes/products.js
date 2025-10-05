@@ -22,7 +22,7 @@ router.get('/', async (req, res) => {
       ];
     }
 
-    const products = await Product.find(query);
+    const products = await Product.find(query).sort({ order: 1, createdAt: 1 });
     res.json(products);
   } catch (error) {
     console.error('Error fetching products:', error);
@@ -77,6 +77,34 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('Error creating product:', error);
     res.status(500).json({ error: 'Failed to create product' });
+  }
+});
+
+// PUT /api/products/order - Update product order (MUST be before /:id route)
+router.put('/order', async (req, res) => {
+  try {
+    const { productOrders } = req.body;
+
+    // Validation
+    if (!productOrders || !Array.isArray(productOrders)) {
+      return res.status(400).json({ error: 'productOrders array is required' });
+    }
+
+    // Update each product's order
+    const updatePromises = productOrders.map(({ productId, order }) => {
+      return Product.findByIdAndUpdate(
+        productId,
+        { order },
+        { new: true }
+      );
+    });
+
+    await Promise.all(updatePromises);
+    
+    res.json({ message: 'Product order updated successfully' });
+  } catch (error) {
+    console.error('Error updating product order:', error);
+    res.status(500).json({ error: 'Failed to update product order' });
   }
 });
 
