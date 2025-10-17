@@ -70,21 +70,6 @@ productSchema.statics.getProductAnalytics = async function() {
       }
     ]);
     
-    // Get brand performance
-    const brandPerformance = await Order.aggregate([
-      { $unwind: '$items' },
-      {
-        $group: {
-          _id: '$items.brandName',
-          orderCount: { $sum: 1 },
-          totalQuantity: { $sum: '$items.quantity' },
-          totalRevenue: { $sum: '$totalAmount' }
-        }
-      },
-      {
-        $sort: { orderCount: -1 }
-      }
-    ]);
     
     // Get product trends over time (last 30 days)
     const thirtyDaysAgo = new Date();
@@ -134,7 +119,6 @@ productSchema.statics.getProductAnalytics = async function() {
       totalProducts,
       productsByBrand,
       popularProducts,
-      brandPerformance,
       productTrends
     };
   } catch (error) {

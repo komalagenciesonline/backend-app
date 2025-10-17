@@ -278,44 +278,6 @@ router.get('/analytics/popular', async (req, res) => {
   }
 });
 
-// GET /api/products/analytics/brand-performance - Get brand performance analytics
-router.get('/analytics/brand-performance', async (req, res) => {
-  try {
-    const Order = require('../models/Order');
-    
-    const brandPerformance = await Order.aggregate([
-      { $unwind: '$items' },
-      {
-        $group: {
-          _id: '$items.brandName',
-          orderCount: { $sum: 1 },
-          totalQuantity: { $sum: '$items.quantity' },
-          totalRevenue: { $sum: '$totalAmount' },
-          avgOrderValue: { $avg: '$totalAmount' },
-          uniqueProducts: { $addToSet: '$items.productName' }
-        }
-      },
-      {
-        $addFields: {
-          uniqueProductCount: { $size: '$uniqueProducts' }
-        }
-      },
-      {
-        $project: {
-          uniqueProducts: 0 // Remove the array from response
-        }
-      },
-      {
-        $sort: { orderCount: -1 }
-      }
-    ]);
-    
-    res.json(brandPerformance);
-  } catch (error) {
-    console.error('Error fetching brand performance:', error);
-    res.status(500).json({ error: 'Failed to fetch brand performance' });
-  }
-});
 
 // GET /api/products/analytics/product-distribution - Get product distribution by brand
 router.get('/analytics/product-distribution', async (req, res) => {
