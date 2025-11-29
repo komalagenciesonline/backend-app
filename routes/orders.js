@@ -260,4 +260,46 @@ router.get('/recent/:limit', async (req, res) => {
   }
 });
 
+// POST /api/orders/cleanup/old-completed - Delete old completed orders (31+ days old)
+router.post('/cleanup/old-completed', async (req, res) => {
+  try {
+    const { orderIds } = req.body;
+
+    if (!orderIds || !Array.isArray(orderIds)) {
+      return res.status(400).json({ error: 'orderIds array is required' });
+    }
+
+    // Verify that all orders are completed and 31+ days old
+    const today = new Date();
+    const thirtyOneDaysAgo = new Date(today);
+    thirtyOneDaysAgo.setDate(today.getDate() - 31);
+
+    const orders = await Order.find({ _id: { $in: orderIds } });
+    
+    // Filter to ensure only completed orders older than 31 days are deleted
+    const validOrderIds = orders
+      .filter(order => {
+        if (order.status !== 'Completed') return false;
+        
+        // Parse the date (format: DD/MM/YYYY)
+        const [day, month, year] = order.date.split('/');
+        const orderDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+        
+        return orderDate <= thirtyOneDaysAgo;
+      })
+      .map(order => order._id);
+
+    // Delete the valid orders
+    const result = await Order.deleteMany({ _id: { $in: validOrderIds } });
+
+    res.json({
+      message: 'Old completed orders deleted successfully',
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    console.error('Error deleting old completed orders:', error);
+    res.status(500).json({ error: 'Failed to delete old completed orders' });
+  }
+});
+
 module.exports = router;
