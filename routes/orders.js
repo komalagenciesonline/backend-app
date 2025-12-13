@@ -38,7 +38,131 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/orders/pending-items - Get pending order items grouped by unit type
+// IMPORTANT: This must be before /:id route to avoid route conflicts
+router.get('/pending-items', async (req, res) => {
+  try {
+    // Get all pending orders
+    const pendingOrders = await Order.find({ status: 'Pending' });
+    
+    // Aggregate items by product and unit type
+    const itemsMap = new Map();
+    
+    pendingOrders.forEach(order => {
+      if (order.items && order.items.length > 0) {
+        order.items.forEach(item => {
+          // Create a unique key: productId + unit
+          const key = `${item.productId}_${item.unit}`;
+          
+          if (itemsMap.has(key)) {
+            const existing = itemsMap.get(key);
+            existing.totalQuantity += item.quantity;
+            existing.orderCount += 1;
+            // Add order number to the list if not already present
+            if (!existing.orderNumbers.includes(order.orderNumber)) {
+              existing.orderNumbers.push(order.orderNumber);
+            }
+          } else {
+            itemsMap.set(key, {
+              productId: item.productId.toString(),
+              productName: item.productName,
+              brandName: item.brandName,
+              unit: item.unit,
+              totalQuantity: item.quantity,
+              orderCount: 1,
+              orderNumbers: [order.orderNumber]
+            });
+          }
+        });
+      }
+    });
+    
+    // Convert map to array and group by unit type
+    const allItems = Array.from(itemsMap.values());
+    
+    // Group by unit type
+    const groupedByUnit = {
+      Pc: allItems.filter(item => item.unit === 'Pc').sort((a, b) => b.totalQuantity - a.totalQuantity),
+      Outer: allItems.filter(item => item.unit === 'Outer').sort((a, b) => b.totalQuantity - a.totalQuantity),
+      Case: allItems.filter(item => item.unit === 'Case').sort((a, b) => b.totalQuantity - a.totalQuantity)
+    };
+    
+    // Calculate totals
+    const totals = {
+      Pc: groupedByUnit.Pc.reduce((sum, item) => sum + item.totalQuantity, 0),
+      Outer: groupedByUnit.Outer.reduce((sum, item) => sum + item.totalQuantity, 0),
+      Case: groupedByUnit.Case.reduce((sum, item) => sum + item.totalQuantity, 0),
+      totalItems: allItems.length,
+      totalOrders: pendingOrders.length
+    };
+    
+    res.json({
+      items: groupedByUnit,
+      totals
+    });
+  } catch (error) {
+    console.error('Error fetching pending order items:', error);
+    res.status(500).json({ error: 'Failed to fetch pending order items' });
+  }
+});
+
+// GET /api/orders/stats/dashboard - Get dashboard statistics
+// IMPORTANT: This must be before /:id route to avoid route conflicts
+router.get('/stats/dashboard', async (req, res) => {
+  try {
+    const totalOrders = await Order.countDocuments();
+    const pendingOrders = await Order.countDocuments({ status: 'Pending' });
+    
+    // Calculate unique items across all orders
+    const orders = await Order.find({}, 'items');
+    const uniqueProducts = new Set();
+    orders.forEach(order => {
+      if (order.items) {
+        order.items.forEach(item => {
+          // Create a unique key using productName + brandName
+          // since some items have null productId
+          const uniqueKey = `${item.productName}-${item.brandName}`;
+          uniqueProducts.add(uniqueKey);
+        });
+      }
+    });
+    const totalItems = uniqueProducts.size;
+
+    // Hardcoded bits count (same as frontend)
+    const totalBits = 8;
+
+    res.json({
+      totalOrders,
+      totalItems,
+      pendingOrders,
+      totalBits
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
+    res.status(500).json({ error: 'Failed to fetch dashboard statistics' });
+  }
+});
+
+// GET /api/orders/recent/:limit - Get recent orders
+// IMPORTANT: This must be before /:id route to avoid route conflicts
+router.get('/recent/:limit', async (req, res) => {
+  try {
+    const limit = parseInt(req.params.limit) || 3;
+    
+    const recentOrders = await Order.find()
+      .populate('items.productId', 'name brandName')
+      .sort({ createdAt: -1 })
+      .limit(limit);
+    
+    res.json(recentOrders);
+  } catch (error) {
+    console.error('Error fetching recent orders:', error);
+    res.status(500).json({ error: 'Failed to fetch recent orders' });
+  }
+});
+
 // GET /api/orders/:id - Get order by ID
+// IMPORTANT: This must be LAST to avoid catching other routes
 router.get('/:id', async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
@@ -204,59 +328,6 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting order:', error);
     res.status(500).json({ error: 'Failed to delete order' });
-  }
-});
-
-// GET /api/orders/stats/dashboard - Get dashboard statistics
-router.get('/stats/dashboard', async (req, res) => {
-  try {
-    const totalOrders = await Order.countDocuments();
-    const pendingOrders = await Order.countDocuments({ status: 'Pending' });
-    
-    // Calculate unique items across all orders
-    const orders = await Order.find({}, 'items');
-    const uniqueProducts = new Set();
-    orders.forEach(order => {
-      if (order.items) {
-        order.items.forEach(item => {
-          // Create a unique key using productName + brandName
-          // since some items have null productId
-          const uniqueKey = `${item.productName}-${item.brandName}`;
-          uniqueProducts.add(uniqueKey);
-        });
-      }
-    });
-    const totalItems = uniqueProducts.size;
-
-    // Hardcoded bits count (same as frontend)
-    const totalBits = 8;
-
-    res.json({
-      totalOrders,
-      totalItems,
-      pendingOrders,
-      totalBits
-    });
-  } catch (error) {
-    console.error('Error fetching dashboard stats:', error);
-    res.status(500).json({ error: 'Failed to fetch dashboard statistics' });
-  }
-});
-
-// GET /api/orders/recent/:limit - Get recent orders
-router.get('/recent/:limit', async (req, res) => {
-  try {
-    const limit = parseInt(req.params.limit) || 3;
-    
-    const recentOrders = await Order.find()
-      .populate('items.productId', 'name brandName')
-      .sort({ createdAt: -1 })
-      .limit(limit);
-    
-    res.json(recentOrders);
-  } catch (error) {
-    console.error('Error fetching recent orders:', error);
-    res.status(500).json({ error: 'Failed to fetch recent orders' });
   }
 });
 
