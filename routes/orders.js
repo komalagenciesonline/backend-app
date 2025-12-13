@@ -42,8 +42,18 @@ router.get('/', async (req, res) => {
 // IMPORTANT: This must be before /:id route to avoid route conflicts
 router.get('/pending-items', async (req, res) => {
   try {
-    // Get all pending orders
-    const pendingOrders = await Order.find({ status: 'Pending' });
+    const { brand, bit } = req.query;
+    
+    // Build query for pending orders
+    let query = { status: 'Pending' };
+    
+    // Filter by bit if specified
+    if (bit && bit !== 'all') {
+      query.bit = bit;
+    }
+    
+    // Get all pending orders (filtered by bit if specified)
+    const pendingOrders = await Order.find(query);
     
     // Aggregate items by product and unit type
     const itemsMap = new Map();
@@ -51,6 +61,11 @@ router.get('/pending-items', async (req, res) => {
     pendingOrders.forEach(order => {
       if (order.items && order.items.length > 0) {
         order.items.forEach(item => {
+          // Filter by brand if specified
+          if (brand && brand !== 'all' && item.brandName !== brand) {
+            return; // Skip this item if it doesn't match the brand filter
+          }
+          
           // Create a unique key: productId + unit
           const key = `${item.productId}_${item.unit}`;
           
