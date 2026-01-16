@@ -229,18 +229,20 @@ router.post('/', async (req, res) => {
     let attempts = 0;
     const maxAttempts = 10;
     
+    // Get the highest existing order number once
+    const lastOrder = await Order.findOne({}, {}, { sort: { orderNumber: -1 } });
+    let nextNumber = 1;
+    
+    if (lastOrder && lastOrder.orderNumber) {
+      // Extract number from last order (e.g., "ORD-004" -> 4)
+      const lastNumber = parseInt(lastOrder.orderNumber.split('-')[1]);
+      if (!isNaN(lastNumber)) {
+        nextNumber = lastNumber + 1;
+      }
+    }
+    
     while (attempts < maxAttempts) {
       try {
-        // Get the highest existing order number
-        const lastOrder = await Order.findOne({}, {}, { sort: { orderNumber: -1 } });
-        let nextNumber = 1;
-        
-        if (lastOrder && lastOrder.orderNumber) {
-          // Extract number from last order (e.g., "ORD-004" -> 4)
-          const lastNumber = parseInt(lastOrder.orderNumber.split('-')[1]);
-          nextNumber = lastNumber + 1;
-        }
-        
         orderNumber = `ORD-${String(nextNumber).padStart(3, '0')}`;
         
         // Try to create the order with this number
@@ -262,7 +264,8 @@ router.post('/', async (req, res) => {
         
       } catch (error) {
         if (error.code === 11000 && error.keyPattern && error.keyPattern.orderNumber) {
-          // Duplicate key error, try again with next number
+          // Duplicate key error, increment number and try again
+          nextNumber++;
           attempts++;
           continue;
         } else {
