@@ -72,6 +72,10 @@ router.post('/', async (req, res) => {
     res.status(201).json(savedRetailer);
   } catch (error) {
     console.error('Error creating retailer:', error);
+    // Handle duplicate key error (race condition - if unique constraint exists)
+    if (error.code === 11000 || (error.name === 'MongoServerError' && error.code === 11000)) {
+      return res.status(400).json({ error: 'Retailer with this phone number already exists' });
+    }
     if (error.name === 'ValidationError') {
       return res.status(400).json({ error: error.message });
     }
@@ -118,6 +122,10 @@ router.put('/:id', async (req, res) => {
     res.json(updatedRetailer);
   } catch (error) {
     console.error('Error updating retailer:', error);
+    // Handle duplicate key error (race condition - if unique constraint exists)
+    if (error.code === 11000 || (error.name === 'MongoServerError' && error.code === 11000)) {
+      return res.status(400).json({ error: 'Retailer with this phone number already exists' });
+    }
     if (error.name === 'ValidationError') {
       return res.status(400).json({ error: error.message });
     }

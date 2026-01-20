@@ -79,6 +79,13 @@ router.post('/', async (req, res) => {
     res.status(201).json(savedBrand);
   } catch (error) {
     console.error('Error creating brand:', error);
+    // Handle duplicate key error (race condition)
+    if (error.code === 11000 || (error.name === 'MongoServerError' && error.code === 11000)) {
+      return res.status(400).json({ error: 'Brand already exists' });
+    }
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Failed to create brand' });
   }
 });
@@ -147,6 +154,10 @@ router.put('/:id', async (req, res) => {
     res.json(updatedBrand);
   } catch (error) {
     console.error('Error updating brand:', error);
+    // Handle duplicate key error (race condition)
+    if (error.code === 11000 || (error.name === 'MongoServerError' && error.code === 11000)) {
+      return res.status(400).json({ error: 'Brand name already exists' });
+    }
     res.status(500).json({ error: 'Failed to update brand' });
   }
 });

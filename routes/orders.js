@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
+const mongoose = require('mongoose');
 
 // GET /api/orders - Get all orders with optional filtering
 router.get('/', async (req, res) => {
@@ -176,6 +177,50 @@ router.get('/recent/:limit', async (req, res) => {
   }
 });
 
+// Counter schema for atomic order number generation
+const counterSchema = new mongoose.Schema({
+  _id: String,
+  sequence_value: { type: Number, default: 0 }
+});
+
+const Counter = mongoose.model('Counter', counterSchema);
+
+// Helper function to get next order number atomically
+async function getNextOrderNumber() {
+  // Check if counter exists, if not initialize it from existing orders
+  const existingCounter = await Counter.findById('orderNumber');
+  if (!existingCounter) {
+    // Initialize counter based on highest existing order number
+    const lastOrder = await Order.findOne({}, {}, { sort: { orderNumber: -1 } });
+    let initialValue = 0;
+    
+    if (lastOrder && lastOrder.orderNumber) {
+      // Extract number from last order (e.g., "ORD-004" -> 4)
+      const lastNumber = parseInt(lastOrder.orderNumber.split('-')[1]);
+      if (!isNaN(lastNumber) && lastNumber >= 0) {
+        initialValue = lastNumber;
+      }
+    }
+    
+    // Try to create the counter with the initial value
+    // Use findOneAndUpdate with upsert to handle race conditions
+    await Counter.findByIdAndUpdate(
+      'orderNumber',
+      { $setOnInsert: { sequence_value: initialValue } },
+      { upsert: true }
+    );
+  }
+
+  // Atomically increment and get the next number
+  const result = await Counter.findByIdAndUpdate(
+    'orderNumber',
+    { $inc: { sequence_value: 1 } },
+    { new: true, upsert: true }
+  );
+
+  return `ORD-${String(result.sequence_value).padStart(3, '0')}`;
+}
+
 // GET /api/orders/:id - Get order by ID
 // IMPORTANT: This must be LAST to avoid catching other routes
 router.get('/:id', async (req, res) => {
@@ -224,59 +269,24 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Generate order number using atomic operation
-    let orderNumber;
-    let attempts = 0;
-    const maxAttempts = 10;
+    // Generate unique order number atomically using counter
+    const orderNumber = await getNextOrderNumber();
     
-    // Get the highest existing order number once
-    const lastOrder = await Order.findOne({}, {}, { sort: { orderNumber: -1 } });
-    let nextNumber = 1;
-    
-    if (lastOrder && lastOrder.orderNumber) {
-      // Extract number from last order (e.g., "ORD-004" -> 4)
-      const lastNumber = parseInt(lastOrder.orderNumber.split('-')[1]);
-      if (!isNaN(lastNumber)) {
-        nextNumber = lastNumber + 1;
-      }
-    }
-    
-    while (attempts < maxAttempts) {
-      try {
-        orderNumber = `ORD-${String(nextNumber).padStart(3, '0')}`;
-        
-        // Try to create the order with this number
-        const order = new Order({
-          counterName: counterName.trim(),
-          bit: bit.trim(),
-          totalItems,
-          totalAmount,
-          date,
-          time,
-          status: 'Pending',
-          orderNumber,
-          items: items || []
-        });
+    // Create the order with the generated number
+    const order = new Order({
+      counterName: counterName.trim(),
+      bit: bit.trim(),
+      totalItems,
+      totalAmount,
+      date,
+      time,
+      status: 'Pending',
+      orderNumber,
+      items: items || []
+    });
 
-        const savedOrder = await order.save();
-        res.status(201).json(savedOrder);
-        return; // Success, exit the function
-        
-      } catch (error) {
-        if (error.code === 11000 && error.keyPattern && error.keyPattern.orderNumber) {
-          // Duplicate key error, increment number and try again
-          nextNumber++;
-          attempts++;
-          continue;
-        } else {
-          // Other error, throw it
-          throw error;
-        }
-      }
-    }
-    
-    // If we get here, we've exceeded max attempts
-    throw new Error('Unable to generate unique order number after multiple attempts');
+    const savedOrder = await order.save();
+    res.status(201).json(savedOrder);
   } catch (error) {
     console.error('Error creating order:', error);
     res.status(500).json({ error: 'Failed to create order' });
