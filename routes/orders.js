@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
-const mongoose = require('mongoose');
+const crypto = require('crypto');
 
 // GET /api/orders - Get all orders with optional filtering
 router.get('/', async (req, res) => {
@@ -177,48 +177,13 @@ router.get('/recent/:limit', async (req, res) => {
   }
 });
 
-// Counter schema for atomic order number generation
-const counterSchema = new mongoose.Schema({
-  _id: String,
-  sequence_value: { type: Number, default: 0 }
-});
-
-const Counter = mongoose.model('Counter', counterSchema);
-
-// Helper function to get next order number atomically
-async function getNextOrderNumber() {
-  // Check if counter exists, if not initialize it from existing orders
-  const existingCounter = await Counter.findById('orderNumber');
-  if (!existingCounter) {
-    // Initialize counter based on highest existing order number
-    const lastOrder = await Order.findOne({}, {}, { sort: { orderNumber: -1 } });
-    let initialValue = 0;
-    
-    if (lastOrder && lastOrder.orderNumber) {
-      // Extract number from last order (e.g., "ORD-004" -> 4)
-      const lastNumber = parseInt(lastOrder.orderNumber.split('-')[1]);
-      if (!isNaN(lastNumber) && lastNumber >= 0) {
-        initialValue = lastNumber;
-      }
-    }
-    
-    // Try to create the counter with the initial value
-    // Use findOneAndUpdate with upsert to handle race conditions
-    await Counter.findByIdAndUpdate(
-      'orderNumber',
-      { $setOnInsert: { sequence_value: initialValue } },
-      { upsert: true }
-    );
-  }
-
-  // Atomically increment and get the next number
-  const result = await Counter.findByIdAndUpdate(
-    'orderNumber',
-    { $inc: { sequence_value: 1 } },
-    { new: true, upsert: true }
-  );
-
-  return `ORD-${String(result.sequence_value).padStart(3, '0')}`;
+// Helper function to generate a random unique order number
+function generateOrderNumber() {
+  // Generate a random 8-character hex string
+  // Format: ORD-XXXXXXXX where X is a hex character (0-9, A-F)
+  // This gives 16^8 = 4.3 billion possible combinations, minimizing collisions
+  const randomId = crypto.randomBytes(4).toString('hex').toUpperCase();
+  return `ORD-${randomId}`;
 }
 
 // GET /api/orders/:id - Get order by ID
@@ -269,27 +234,53 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Generate unique order number atomically using counter
-    const orderNumber = await getNextOrderNumber();
+    // Generate random unique order number
+    let orderNumber;
+    let attempts = 0;
+    const maxAttempts = 5;
     
-    // Create the order with the generated number
-    const order = new Order({
-      counterName: counterName.trim(),
-      bit: bit.trim(),
-      totalItems,
-      totalAmount,
-      date,
-      time,
-      status: 'Pending',
-      orderNumber,
-      items: items || []
-    });
+    while (attempts < maxAttempts) {
+      try {
+        orderNumber = generateOrderNumber();
+        
+        // Create the order with the generated number
+        const order = new Order({
+          counterName: counterName.trim(),
+          bit: bit.trim(),
+          totalItems,
+          totalAmount,
+          date,
+          time,
+          status: 'Pending',
+          orderNumber,
+          items: items || []
+        });
 
-    const savedOrder = await order.save();
-    res.status(201).json(savedOrder);
+        const savedOrder = await order.save();
+        res.status(201).json(savedOrder);
+        return; // Success, exit the function
+        
+      } catch (error) {
+        // If duplicate key error, try again with a new random number
+        if (error.code === 11000 && error.keyPattern && error.keyPattern.orderNumber) {
+          attempts++;
+          if (attempts >= maxAttempts) {
+            throw new Error('Unable to generate unique order number after multiple attempts');
+          }
+          continue; // Try again with new random number
+        } else {
+          // Other error, throw it
+          throw error;
+        }
+      }
+    }
   } catch (error) {
     console.error('Error creating order:', error);
-    res.status(500).json({ error: 'Failed to create order' });
+    if (error.message && error.message.includes('Unable to generate unique order number')) {
+      res.status(500).json({ error: error.message });
+    } else {
+      res.status(500).json({ error: 'Failed to create order' });
+    }
   }
 });
 
