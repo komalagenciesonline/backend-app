@@ -86,6 +86,9 @@ const orderSchema = new mongoose.Schema({
 // Indexes for better query performance
 orderSchema.index({ counterName: 'text', bit: 'text' });
 orderSchema.index({ status: 1 });
+orderSchema.index({ bit: 1 }); // Add index for bit filtering
+orderSchema.index({ createdAt: -1 }); // Add index for sorting by creation date
+orderSchema.index({ status: 1, bit: 1 }); // Compound index for status + bit queries
 orderSchema.index({ date: 1 });
 // Note: orderNumber index is automatically created by unique: true constraint
 

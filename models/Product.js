@@ -24,9 +24,11 @@ const productSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for better search performance
+// Indexes for better search performance
 productSchema.index({ name: 'text', brandName: 'text' });
 productSchema.index({ brandId: 1 });
+productSchema.index({ brandName: 1 }); // Add index for brand filtering
+productSchema.index({ order: 1, createdAt: 1 }); // Compound index for sorting
 
 // Analytics methods
 productSchema.statics.getProductAnalytics = async function() {

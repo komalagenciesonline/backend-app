@@ -6,21 +6,49 @@ const Product = require('../models/Product');
 // Helper function to automatically delete brands with no products
 const cleanupEmptyBrands = async () => {
   try {
+    // Use aggregation to efficiently find brands with actual product counts
+    const brandProductCounts = await Product.aggregate([
+      {
+        $group: {
+          _id: '$brandId',
+          actualCount: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    // Create a map for fast lookup
+    const productCountMap = new Map();
+    brandProductCounts.forEach(item => {
+      productCountMap.set(item._id.toString(), item.actualCount);
+    });
+    
+    // Get all brands with productCount <= 0
     const emptyBrands = await Brand.find({ productCount: { $lte: 0 } });
     
+    // Process brands in parallel where possible
+    const deletePromises = [];
+    const updatePromises = [];
+    
     for (const brand of emptyBrands) {
-      // Double-check by counting actual products
-      const actualProductCount = await Product.countDocuments({ brandId: brand._id });
+      const actualCount = productCountMap.get(brand._id.toString()) || 0;
       
-      if (actualProductCount === 0) {
-        await Brand.findByIdAndDelete(brand._id);
-        console.log(`Brand "${brand.name}" automatically deleted as it has no products`);
+      if (actualCount === 0) {
+        deletePromises.push(
+          Brand.findByIdAndDelete(brand._id).then(() => {
+            console.log(`Brand "${brand.name}" automatically deleted as it has no products`);
+          })
+        );
       } else {
-        // Sync the productCount if it's incorrect
-        await Brand.findByIdAndUpdate(brand._id, { productCount: actualProductCount });
-        console.log(`Synced productCount for brand "${brand.name}" to ${actualProductCount}`);
+        updatePromises.push(
+          Brand.findByIdAndUpdate(brand._id, { productCount: actualCount }).then(() => {
+            console.log(`Synced productCount for brand "${brand.name}" to ${actualCount}`);
+          })
+        );
       }
     }
+    
+    // Execute deletions and updates in parallel
+    await Promise.all([...deletePromises, ...updatePromises]);
   } catch (error) {
     console.error('Error during brand cleanup:', error);
   }
@@ -29,7 +57,9 @@ const cleanupEmptyBrands = async () => {
 // GET /api/brands - Get all brands
 router.get('/', async (req, res) => {
   try {
-    const brands = await Brand.find().sort({ order: 1, name: 1 });
+    const brands = await Brand.find()
+      .sort({ order: 1, name: 1 })
+      .select('-__v'); // Exclude version key
     res.json(brands);
   } catch (error) {
     console.error('Error fetching brands:', error);

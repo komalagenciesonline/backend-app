@@ -22,7 +22,9 @@ router.get('/', async (req, res) => {
       ];
     }
 
-    const products = await Product.find(query).sort({ order: 1, createdAt: 1 });
+    const products = await Product.find(query)
+      .sort({ order: 1, createdAt: 1 })
+      .select('-__v'); // Exclude version key
     res.json(products);
   } catch (error) {
     console.error('Error fetching products:', error);
@@ -198,9 +200,9 @@ router.delete('/:id', async (req, res) => {
 // GET /api/products/brands/unique - Get unique brand names for filtering
 router.get('/brands/unique', async (req, res) => {
   try {
-    const brands = await Brand.find({}, 'name').sort({ name: 1 });
-    const brandNames = brands.map(brand => brand.name);
-    res.json(brandNames);
+    // Use distinct for better performance instead of fetching all brands
+    const brandNames = await Brand.distinct('name');
+    res.json(brandNames.sort()); // Sort alphabetically
   } catch (error) {
     console.error('Error fetching unique brand names:', error);
     res.status(500).json({ error: 'Failed to fetch brand names' });

@@ -22,7 +22,9 @@ router.get('/', async (req, res) => {
       ];
     }
 
-    const retailers = await Retailer.find(query).sort({ name: 1 });
+    const retailers = await Retailer.find(query)
+      .sort({ name: 1 })
+      .select('-__v'); // Exclude version key
     res.json(retailers);
   } catch (error) {
     console.error('Error fetching retailers:', error);

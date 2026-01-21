@@ -28,9 +28,10 @@ router.get('/', async (req, res) => {
       ];
     }
 
+    // No populate needed - productName and brandName are already stored in items
     const orders = await Order.find(query)
-      .populate('items.productId', 'name brandName')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .select('-__v'); // Exclude version key
     
     res.json(orders);
   } catch (error) {
@@ -45,71 +46,74 @@ router.get('/pending-items', async (req, res) => {
   try {
     const { brand, bit } = req.query;
     
-    // Build query for pending orders
-    let query = { status: 'Pending' };
-    
-    // Filter by bit if specified
+    // Build match query for aggregation
+    const matchQuery = { status: 'Pending' };
     if (bit && bit !== 'all') {
-      query.bit = bit;
+      matchQuery.bit = bit;
+    }
+    if (brand && brand !== 'all') {
+      matchQuery['items.brandName'] = brand;
     }
     
-    // Get all pending orders (filtered by bit if specified)
-    const pendingOrders = await Order.find(query);
-    
-    // Aggregate items by product and unit type
-    const itemsMap = new Map();
-    
-    pendingOrders.forEach(order => {
-      if (order.items && order.items.length > 0) {
-        order.items.forEach(item => {
-          // Filter by brand if specified
-          if (brand && brand !== 'all' && item.brandName !== brand) {
-            return; // Skip this item if it doesn't match the brand filter
-          }
-          
-          // Create a unique key: productId + unit
-          const key = `${item.productId}_${item.unit}`;
-          
-          if (itemsMap.has(key)) {
-            const existing = itemsMap.get(key);
-            existing.totalQuantity += item.quantity;
-            existing.orderCount += 1;
-            // Add order number to the list if not already present
-            if (!existing.orderNumbers.includes(order.orderNumber)) {
-              existing.orderNumbers.push(order.orderNumber);
-            }
-          } else {
-            itemsMap.set(key, {
-              productId: item.productId.toString(),
-              productName: item.productName,
-              brandName: item.brandName,
-              unit: item.unit,
-              totalQuantity: item.quantity,
-              orderCount: 1,
-              orderNumbers: [order.orderNumber]
-            });
-          }
-        });
+    // Use MongoDB aggregation pipeline for much better performance
+    const pipeline = [
+      { $match: matchQuery },
+      { $unwind: '$items' },
+      // Filter by brand at database level if specified
+      ...(brand && brand !== 'all' ? [{ $match: { 'items.brandName': brand } }] : []),
+      {
+        $group: {
+          _id: {
+            productId: '$items.productId',
+            unit: '$items.unit'
+          },
+          productName: { $first: '$items.productName' },
+          brandName: { $first: '$items.brandName' },
+          unit: { $first: '$items.unit' },
+          totalQuantity: { $sum: '$items.quantity' },
+          orderCount: { $sum: 1 },
+          orderNumbers: { $addToSet: '$orderNumber' }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          productId: '$_id.productId',
+          productName: 1,
+          brandName: 1,
+          unit: 1,
+          totalQuantity: 1,
+          orderCount: 1,
+          orderNumbers: 1
+        }
       }
-    });
+    ];
     
-    // Convert map to array and group by unit type
-    const allItems = Array.from(itemsMap.values());
+    const aggregatedItems = await Order.aggregate(pipeline);
+    
+    // Convert productId to string and group by unit type in memory (small dataset now)
+    const itemsWithStringId = aggregatedItems.map(item => ({
+      ...item,
+      productId: item.productId.toString()
+    }));
     
     // Group by unit type
     const groupedByUnit = {
-      Pc: allItems.filter(item => item.unit === 'Pc').sort((a, b) => b.totalQuantity - a.totalQuantity),
-      Outer: allItems.filter(item => item.unit === 'Outer').sort((a, b) => b.totalQuantity - a.totalQuantity),
-      Case: allItems.filter(item => item.unit === 'Case').sort((a, b) => b.totalQuantity - a.totalQuantity)
+      Pc: itemsWithStringId.filter(item => item.unit === 'Pc').sort((a, b) => b.totalQuantity - a.totalQuantity),
+      Outer: itemsWithStringId.filter(item => item.unit === 'Outer').sort((a, b) => b.totalQuantity - a.totalQuantity),
+      Case: itemsWithStringId.filter(item => item.unit === 'Case').sort((a, b) => b.totalQuantity - a.totalQuantity)
     };
+    
+    // Get total orders count (separate efficient query)
+    const totalOrdersCount = await Order.countDocuments(matchQuery);
     
     // Calculate totals
     const totals = {
       Pc: groupedByUnit.Pc.reduce((sum, item) => sum + item.totalQuantity, 0),
       Outer: groupedByUnit.Outer.reduce((sum, item) => sum + item.totalQuantity, 0),
       Case: groupedByUnit.Case.reduce((sum, item) => sum + item.totalQuantity, 0),
-      totalItems: allItems.length,
-      totalOrders: pendingOrders.length
+      totalItems: itemsWithStringId.length,
+      totalOrders: totalOrdersCount
     };
     
     res.json({
@@ -126,23 +130,25 @@ router.get('/pending-items', async (req, res) => {
 // IMPORTANT: This must be before /:id route to avoid route conflicts
 router.get('/stats/dashboard', async (req, res) => {
   try {
-    const totalOrders = await Order.countDocuments();
-    const pendingOrders = await Order.countDocuments({ status: 'Pending' });
-    
-    // Calculate unique items across all orders
-    const orders = await Order.find({}, 'items');
-    const uniqueProducts = new Set();
-    orders.forEach(order => {
-      if (order.items) {
-        order.items.forEach(item => {
-          // Create a unique key using productName + brandName
-          // since some items have null productId
-          const uniqueKey = `${item.productName}-${item.brandName}`;
-          uniqueProducts.add(uniqueKey);
-        });
-      }
-    });
-    const totalItems = uniqueProducts.size;
+    // Use aggregation for better performance instead of fetching all orders
+    const [totalOrders, pendingOrders, uniqueProductsResult] = await Promise.all([
+      Order.countDocuments(),
+      Order.countDocuments({ status: 'Pending' }),
+      Order.aggregate([
+        { $unwind: '$items' },
+        {
+          $group: {
+            _id: {
+              productName: '$items.productName',
+              brandName: '$items.brandName'
+            }
+          }
+        },
+        { $count: 'total' }
+      ])
+    ]);
+
+    const totalItems = uniqueProductsResult[0]?.total || 0;
 
     // Hardcoded bits count (same as frontend)
     const totalBits = 8;
@@ -165,10 +171,11 @@ router.get('/recent/:limit', async (req, res) => {
   try {
     const limit = parseInt(req.params.limit) || 3;
     
+    // No populate needed - productName and brandName are already stored in items
     const recentOrders = await Order.find()
-      .populate('items.productId', 'name brandName')
       .sort({ createdAt: -1 })
-      .limit(limit);
+      .limit(limit)
+      .select('-__v'); // Exclude version key
     
     res.json(recentOrders);
   } catch (error) {
@@ -190,8 +197,9 @@ function generateOrderNumber() {
 // IMPORTANT: This must be LAST to avoid catching other routes
 router.get('/:id', async (req, res) => {
   try {
+    // No populate needed - productName and brandName are already stored in items
     const order = await Order.findById(req.params.id)
-      .populate('items.productId', 'name brandName');
+      .select('-__v'); // Exclude version key
     
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
@@ -287,17 +295,16 @@ router.post('/', async (req, res) => {
 // PUT /api/orders/:id - Update order
 router.put('/:id', async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
-    
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-
+    // Use findByIdAndUpdate directly - no need for separate find query
     const updatedOrder = await Order.findByIdAndUpdate(
       req.params.id,
       req.body,
-      { new: true }
+      { new: true, runValidators: true }
     );
+
+    if (!updatedOrder) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
 
     res.json(updatedOrder);
   } catch (error) {
@@ -315,16 +322,16 @@ router.patch('/:id/status', async (req, res) => {
       return res.status(400).json({ error: 'Valid status is required' });
     }
 
-    const order = await Order.findById(req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-
+    // Use findByIdAndUpdate directly - no need for separate find query
     const updatedOrder = await Order.findByIdAndUpdate(
       req.params.id,
       { status },
-      { new: true }
+      { new: true, runValidators: true }
     );
+
+    if (!updatedOrder) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
 
     res.json(updatedOrder);
   } catch (error) {
@@ -336,13 +343,13 @@ router.patch('/:id/status', async (req, res) => {
 // DELETE /api/orders/:id - Delete order
 router.delete('/:id', async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
+    // Use findByIdAndDelete directly - returns null if not found
+    const deletedOrder = await Order.findByIdAndDelete(req.params.id);
     
-    if (!order) {
+    if (!deletedOrder) {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    await Order.findByIdAndDelete(req.params.id);
     res.json({ message: 'Order deleted successfully' });
   } catch (error) {
     console.error('Error deleting order:', error);
